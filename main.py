@@ -1,7 +1,10 @@
 import os
+import logging
 import requests
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException
+
+logging.basicConfig(level=logging.INFO)
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -26,7 +29,8 @@ class StatusPayload(BaseModel):
 
 def enviar_telegram(msg: str):
     if not TELEGRAM_TOKEN or not CHAT_ID:
-        raise HTTPException(status_code=500, detail="TELEGRAM_TOKEN ou CHAT_ID não configurados.")
+        logging.error("TELEGRAM_TOKEN ou CHAT_ID não configurados.")
+        return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
@@ -34,13 +38,14 @@ def enviar_telegram(msg: str):
         "text": msg,
         "parse_mode": "HTML",
     }
-    response = requests.post(url, json=payload, timeout=10)
-
-    if not response.ok:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Erro ao enviar mensagem no Telegram: {response.text}",
-        )
+    try:
+        response = requests.post(url, json=payload, timeout=20)
+        if not response.ok:
+            logging.error(f"Telegram recusou a mensagem: {response.text}")
+    except requests.exceptions.Timeout:
+        logging.warning("Timeout ao conectar no Telegram. Mensagem não enviada.")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Erro ao enviar para o Telegram: {e}")
 
 
 @app.post("/monitor")
