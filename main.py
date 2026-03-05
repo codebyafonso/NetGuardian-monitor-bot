@@ -54,23 +54,30 @@ def checar_mongo() -> dict:
     try:
         client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=8000)
         admin = client["admin"]
-        result = admin.command("listDatabases", nameOnly=False)
+        result = admin.command("listDatabases", nameOnly=True)
+
+        ignorar = {"admin", "local", "config"}
+        bancos = []
+        total_bytes = 0
+
+        for db_info in result.get("databases", []):
+            nome = db_info["name"]
+            if nome in ignorar:
+                continue
+            stats = client[nome].command("dbStats", scale=1)
+            storage = stats.get("storageSize", 0)
+            total_bytes += storage
+            bancos.append({
+                "banco": nome,
+                "tamanho_mb": round(storage / (1024 * 1024), 2),
+            })
+
         client.close()
 
-        total_bytes = result.get("totalSize", 0)
         usado_mb = round(total_bytes / (1024 * 1024), 2)
         total_mb = MONGO_LIMIT_MB
         percent = round((usado_mb / total_mb) * 100, 1)
         livre_mb = round(total_mb - usado_mb, 2)
-
-        bancos = [
-            {
-                "banco": db["name"],
-                "tamanho_mb": round(db["sizeOnDisk"] / (1024 * 1024), 2),
-            }
-            for db in result.get("databases", [])
-            if db["name"] not in ("admin", "local", "config")
-        ]
 
         return {
             "usado_mb": usado_mb,
@@ -154,6 +161,17 @@ def receber_status(data: StatusPayload):
                 f"Servidor: <code>{servidor}</code>\n"
                 f"Tempo resposta: <b>{tempo} ms</b>"
             )
+
+            mongo = checar_mongo()
+            if mongo:
+                emoji_mongo = "🔴" if mongo["percent"] >= 95 else "🟡" if mongo["percent"] >= MONGO_ALERT_PERCENT else "🟢"
+                mensagem += (
+                    f"\n\n<b>MongoDB Atlas</b>\n"
+                    f"{emoji_mongo} Uso: <b>{mongo['percent']}%</b> "
+                    f"({mongo['usado_mb']} MB / {mongo['total_mb']} MB)\n"
+                    f"Livre: <b>{mongo['livre_mb']} MB</b>"
+                )
+
             enviar_telegram(mensagem)
             ultimo_online[servidor] = agora
             enviado = True
