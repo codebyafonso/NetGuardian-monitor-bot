@@ -1,6 +1,6 @@
 # telegram-monitor-bot
 
-Sistema de monitoramento de servidores com notificações via Telegram. Um ESP32 verifica periodicamente se os servidores estão online e envia os dados para uma API FastAPI, que dispara alertas no Telegram.
+Sistema de monitoramento de servidores e banco de dados com notificações via Telegram. Um ESP32 verifica periodicamente se os servidores estão online e envia os dados para uma API FastAPI, que também monitora o storage do MongoDB Atlas e dispara alertas no Telegram.
 
 ## Como funciona
 
@@ -11,6 +11,12 @@ ESP32
         └─ API verifica o status
               ├─ offline → notifica imediatamente no Telegram
               └─ online  → notifica 1x por hora no Telegram
+
+API (background, a cada 1h)
+  └─ conecta no MongoDB Atlas
+  └─ verifica storage total do cluster
+        ├─ >= 80% → alerta 🟡 no Telegram
+        └─ >= 95% → alerta 🔴 no Telegram
 ```
 
 ## Estrutura
@@ -28,7 +34,7 @@ telegram-monitor-bot/
 
 ## API (Render)
 
-### Setup
+### Setup local
 
 1. Clone o repositório e crie o `.env`:
 ```bash
@@ -39,6 +45,10 @@ cp .env.example .env
 ```
 TELEGRAM_TOKEN=token_do_botfather
 CHAT_ID=seu_chat_id
+
+MONGO_URI=mongodb+srv://usuario:senha@cluster.mongodb.net/
+MONGO_LIMIT_MB=512
+MONGO_ALERT_PERCENT=80
 ```
 
 3. Instale as dependências:
@@ -56,16 +66,26 @@ python -m uvicorn main:app --reload
 1. Suba o repositório no GitHub
 2. Crie um **Web Service** no [Render](https://render.com) apontando pro repositório
 3. Configure as variáveis de ambiente no painel do Render:
-   - `TELEGRAM_TOKEN`
-   - `CHAT_ID`
+
+| Variável | Descrição |
+|---|---|
+| `TELEGRAM_TOKEN` | Token do bot (BotFather) |
+| `CHAT_ID` | ID do chat/grupo no Telegram |
+| `MONGO_URI` | Connection string do Atlas (`mongodb+srv://...`) |
+| `MONGO_LIMIT_MB` | Limite total do cluster em MB (padrão: `512`) |
+| `MONGO_ALERT_PERCENT` | % de uso para disparar alerta (padrão: `80`) |
+
 4. Start command:
 ```
 python -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-### Endpoint
+---
 
-**POST** `/monitor`
+## Endpoints
+
+### `POST /monitor`
+Recebe status de servidor enviado pelo ESP32.
 
 ```json
 {
@@ -81,20 +101,54 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 | `status` | string | `"online"` ou `"offline"` |
 | `response_time` | int | Tempo de resposta em ms (use `0` se offline) |
 
-### Exemplos de notificação no Telegram
+### `GET /mongo-status`
+Retorna o uso atual de storage do cluster MongoDB Atlas.
 
+```json
+{
+  "usado_mb": 210.5,
+  "livre_mb": 301.5,
+  "total_mb": 512.0,
+  "percent": 41.1,
+  "bancos": [
+    { "banco": "supportflow", "tamanho_mb": 130.2 },
+    { "banco": "pppoeye", "tamanho_mb": 80.3 }
+  ]
+}
+```
+
+---
+
+## Notificações no Telegram
+
+**Servidor offline** (imediato):
 ```
 🚨 SERVIDOR OFFLINE
 
-Servidor: servidor1
+Servidor: supportflow
 Tempo resposta: 0 ms
 ```
 
+**Servidor online** (1x por hora):
 ```
 ✅ SERVIDOR ONLINE
 
-Servidor: servidor1
+Servidor: supportflow
 Tempo resposta: 1023 ms
+```
+
+**Storage MongoDB** (quando >= 80%):
+```
+🟡 ALERTA: MongoDB Atlas
+
+Uso total: 82.3%
+Usado: 421.4 MB
+Livre: 90.6 MB
+Limite: 512 MB
+
+Por banco:
+  • supportflow: 310.2 MB
+  • pppoeye: 111.2 MB
 ```
 
 ---
